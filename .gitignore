@@ -22,3 +22,5 @@ CMakeLists.txt.user
 .clang-completion-error
 /Release
 tags
+.idea
+cmake-build-debug

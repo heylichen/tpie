@@ -4,6 +4,11 @@
 [![unit tests](https://github.com/thomasmoelhave/tpie/actions/workflows/unit_test.yml/badge.svg)](https://github.com/thomasmoelhave/tpie/actions/workflows/unit_test.yml)
 [![documentation](https://github.com/thomasmoelhave/tpie/actions/workflows/doxygen.yml/badge.svg)](https://thomasmoelhave.github.io/tpie)
 
+**branch note **
+This is a branch for learning blocked kdtree(bkdtree).
+I may add some comments for better understanding. bkdtree related code 
+may be moved from deadcode.
+
 The TPIE (Templated Portable I/O Environment) library is a tool box providing
 efficient and convenient tools to ease the implementation of algorithms and data
 structures on very large sets of data.

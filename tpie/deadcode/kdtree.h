@@ -464,6 +464,15 @@ protected:
 			// should be highly optimized by the compiler for 2 dimensions.
       
 			// Multipliers for this matrix.
+			// note: as this grid matrix is multidimensional, dimension count is
+			// dynamic, we can't declare it as multidimensional array. so
+			// authors declare it as a one dimensional array and convert the
+			// index of multidimensional array to index of one dimensional array.
+			// multi[] is helper data for this conversion.
+			// as an example, say the grid is 3*3*3, a cell in c[i2][i1][i0]
+			// can be represented in one dimensional array as
+			// c[ i0*1 + i1*3 + i2*3*3 ], here mult[] is {1, 3, 3*3}
+			// subscript of mult is dim d.
 			size_t mult[dim+1]; // mult[i] = t[0] * .. * t[i-1]
 			mult[0] = 1;
 			for (i = 1; i <= dim; i++)
@@ -500,6 +509,7 @@ protected:
 			// i is i_0*mult[0] + i_1*mult[1] + ...
 			// For each element in the matrix, decide whether it goes in the
 			// low or in the high matrix.
+			// pure in-memory computation
 			for (i = 0; i < mult[dim]; i++) {
 				ni = 0;
 	
@@ -838,7 +848,10 @@ protected:
 				//  assert(q.size() == 0);
 			}
 
-
+			/**
+			 * create a matrix, compute the point count belongs to each cell
+			 * @return grid matrix, the point count matrix of grid cells
+			 */
 			grid_matrix* create_matrix() {
       
 				size_t i, j;
@@ -862,16 +875,21 @@ protected:
 				err = streams[0]->read_item(&p2);
 				oldvalue = (*p2)[0];
       
-				// Compute the counts. Loop over all points.
+				// Compute the counts. Loop over all points. For each point,
+				// calculate the grid cell gmx->c[ni], add count to it.
 				while (err == tpie::ami::NO_ERROR) {
 	
 					// Since streams[0] is sorted on the first dimension, there's no
 					// need for binary search on this dimension.
+					// note: i_0 is the index of strip of current point in dim 0
 					if (i_0 < t[0] - 1)
 						if (l[0][i_0] == (*p2)[0] && (*p2)[0] > oldvalue) {
+							// when current point dim 0 value exceed current strip
 							i_0++;
 							oldvalue = (*p2)[0];
 						}
+					// ni is the grid cell index in multi dim expanded as 1 dim
+					// why not just use c[i1][i2]...? because the dim count is dynamic
 					ni = i_0;
 					///    mult = t[0];
 					mult = 1;
@@ -884,11 +902,14 @@ protected:
 	  
 						///      i_i = upper_bound(l[i], l[i] + (t[i]-1), (*p2)[i]) - l[i];
 						// START New code, taken from the stl library (stl_algo.h).
+						//line count in dim i: t[i]-1
 						len = t[i]-1;
+						//first line cord * in dim i
 						first = l[i];
 						while (len > 0) {
 							half = len >> 1;
 							middle = first + half;
+							//val is (*p2)[i]
 							if (val < *middle)
 								len = half;
 							else {
@@ -2260,6 +2281,8 @@ protected:
 		create_node_g(header_.root_bid, 0, gmx);
 
 		// Distribute the points.
+		// note: for the tasks in g->q, iterate points in all streams, distribute
+		// each point to each task region.
 		DBG("  Distributing in " << (TPIE_OS_OFFSET)g->q.size() << "x" << (TPIE_OS_OFFSET)dim << " streams [" << (TPIE_OS_OFFSET)dim << " linear scans, distribution writing]...\n");
 		distribute_g(header_.root_bid, 0, g);
 
@@ -2540,6 +2563,10 @@ protected:
 #if TPIE_AMI_KDTREE_STORE_WEIGHTS
 			b->el[ctx.i].high_weight() = gmx_hi->point_count;
 #endif
+		// note: not quite as the essay said. it won't stop when
+		// tree height is log2(t) and build recursively. it just creates node g recursively all the way
+		// until can_do_mm then push a sub-task. But the can_do_mm sub-tasks can be too many
+		// to hold in memory. why the authors pay no concern?
 		if (can_do_mm(gmx_hi->point_count)) {
 
 			b->el[ctx.i].set_high_child(gmx_hi->g->q.size(), GRID_INDEX);

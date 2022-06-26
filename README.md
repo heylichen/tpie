@@ -4,7 +4,7 @@
 [![unit tests](https://github.com/thomasmoelhave/tpie/actions/workflows/unit_test.yml/badge.svg)](https://github.com/thomasmoelhave/tpie/actions/workflows/unit_test.yml)
 [![documentation](https://github.com/thomasmoelhave/tpie/actions/workflows/doxygen.yml/badge.svg)](https://thomasmoelhave.github.io/tpie)
 
-**branch note **
+**branch note**
 This is a branch for learning blocked kdtree(bkdtree).
 I may add some comments for better understanding. bkdtree related code 
 may be moved from deadcode.

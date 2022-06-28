@@ -2749,20 +2749,28 @@ protected:
 		return err;
 	}
 
-
-//// *kdtree::load* ////
+	/**
+	 * note: we talk about bkd tree using logmethod to initialize it. When will the
+	   kdtree.load be called? If we start from an empty bkdtree, insert points to it,
+	   then when tree0 is full, each selected kdtree will call load during reload step.
+	   Input s is a stream (on disk file) containing all the points needing to be loaded
+	   into one single on disk kdtree.
+	 */
+	//// *kdtree::load* ////
 	template<class coord_t, TPIE_OS_SIZE_T dim, class Bin_node, class BTECOLL>
 	err TPIE_AMI_KDTREE::load(POINT_STREAM* s, float lfill, float nfill, int load_method) {
 		TPLOG("kdtree::load Entering "<<"\n");
+		// #define POINT            record<coord_t, TPIE_OS_SIZE_T, dim>
+		// #define POINT_STREAM     stream< POINT >
+		// a stream of record stored on disk file
 		POINT_STREAM* streams_s[dim];
 		size_t i;
 		err err;
-
 		for (i = 0; i < dim; i++) {
 			streams_s[i] = NULL;
 		}
 
-		// Sort.
+		// Sort. generate a stream sorted on each dim
 		err = sort(s, streams_s);
 		// Load.
 		if (err == tpie::ami::NO_ERROR)

@@ -122,16 +122,16 @@ namespace tpie {
 	    // Constructor. Create a new struct. with the given base name for
 	    // all its files.  Protected to avoid instantiation of this base
 	    // class.
-	Logmethod_base(const std::string& base_file_name, const Logmethod_params<Tp, T0p>& params);
-	    
-	    class header_type {
-	    public:
-		TPIE_OS_OFFSET size; // The total number of elements stored in the structure.
-		TPIE_OS_SIZE_T last_tree; // the index of the last tree in the trees_ vector
-		header_type(): size(0), last_tree(0) {}
-	    };
-	    
-	    // Run-time parameters.
+		Logmethod_base(const std::string& base_file_name, const Logmethod_params<Tp, T0p>& params);
+
+		class header_type {
+		public:
+			TPIE_OS_OFFSET size; // The total number of elements stored in the structure.
+			TPIE_OS_SIZE_T last_tree; // the index of the last tree in the trees_ vector
+			header_type() : size(0) , last_tree(0) {}
+		};
+
+		// Run-time parameters.
 	    Logmethod_params<Tp, T0p> params_;
 
 	    // Critical information (will be written in the header of the first tree)
@@ -246,62 +246,61 @@ namespace tpie {
 namespace tpie {
 
     namespace ami {
-	
 
-//// *Logmethod_base::Logmethod_base* ////
-	template<class Key, class Value, class T, class Tp, class T0, class T0p>
-	LOGMETHOD_BASE::Logmethod_base(const std::string& base_file_name, 
-				       const Logmethod_params<Tp, T0p> &params):
-	    params_(params), header_(), tree0_(NULL), trees_(0), per_(PERSIST_PERSISTENT), stats_() {
-	    
-	    // Copy the name and make sure it has two free positions, to be
-	    // filled later with a unique number for each tree.
+	/***
+	 * 1) if base_file_name exists and is valid, read header and init trees
+	 *  according the file.
+	 * 2) otherwise creating new logmethod structure
+	 */
+	//// *Logmethod_base::Logmethod_base* ////
+	template <class Key, class Value, class T, class Tp, class T0, class T0p>
+	LOGMETHOD_BASE::Logmethod_base(const std::string &base_file_name,
+								   const Logmethod_params<Tp, T0p> &params)
+		: params_(params)
+		, header_()
+		, tree0_(NULL)
+		, trees_(0)
+		, per_(PERSIST_PERSISTENT)
+		, stats_() {
+		// Copy the name and make sure it has two free positions, to be
+		// filled later with a unique number for each tree.
 		base_file_name_ = base_file_name;
-	    mbr_is_set_ = false;
+		mbr_is_set_ = false;
 		temp_name_ = base_file_name_;
-	    
-	    TPIE_OS_FILE_DESCRIPTOR fd; // file descriptor for the header file.
-	    
-	    // Try to open header file read-only.
+
+		TPIE_OS_FILE_DESCRIPTOR fd; // file descriptor for the header file.
+
+		// Try to open header file read-only.
 		fd = TPIE_OS_OPEN_ORDONLY(base_file_name_);
-	    if (TPIE_OS_IS_VALID_FILE_DESCRIPTOR(fd)) {
-		if (TPIE_OS_READ(fd, &header_, sizeof(header_)) != sizeof(header_)) {
+		if (TPIE_OS_IS_VALID_FILE_DESCRIPTOR(fd)) {
+			if (TPIE_OS_READ(fd, &header_, sizeof(header_))
+				!= sizeof(header_)) {
+				TP_LOG_WARNING_ID("Corrupt header file.");
+				assert(0);
+			}
+			TPIE_OS_CLOSE(fd);
+			assert(header_.last_tree < 100);
 
-		    TP_LOG_WARNING_ID("Corrupt header file.");
+			TPIE_OS_SIZE_T i;
+			// Initialize trees.
+			for (i = 0; i <= header_.last_tree; i++) {
+				trees_.push_back(0);
+				create_tree(i);
+			}
+			// Get the real params.
+			params_.tree0_params = tree0_->params();
+			if (i >= 1) params_.tree_params = trees_[1]->params();
+		} else {
+			TP_LOG_APP_DEBUG_ID("Creating new logmethod structure.");
+			// Bogus entry in the trees_ vector.
+			trees_.push_back(0);
 
-		    assert(0);
-
+			// Create tree0_.
+			create_tree(0);
 		}
-		TPIE_OS_CLOSE(fd);
-		
-		assert(header_.last_tree < 100);
-
-		TPIE_OS_SIZE_T i;
-		
-		// Initialize trees.
-		for (i = 0; i <= header_.last_tree; i++) {
-		    trees_.push_back(0);
-		    create_tree(i);
-		}
-
-		// Get the real params.
-		params_.tree0_params = tree0_->params();
-		if (i >= 1)
-		    params_.tree_params = trees_[1]->params();
-	    } 
-	    else {
-
-		TP_LOG_APP_DEBUG_ID("Creating new logmethod structure.");
-
-		// Bogus entry in the trees_ vector.
-		trees_.push_back(0);
-
-		// Create tree0_.
-		create_tree(0);
-	    }
 	}
 
-//// *Logmethod_base::erase* ////
+	//// *Logmethod_base::erase* ////
 	template<class Key, class Value, class T, class Tp, class T0, class T0p>
 	bool LOGMETHOD_BASE::erase(const Value& p) {
 
@@ -325,30 +324,29 @@ namespace tpie {
 	    return ans;
 	}
 
-//// *Logmethod_base::find* ////
-	template<class Key, class Value, class T, class Tp, class T0, class T0p>
-	bool LOGMETHOD_BASE::find(const Value& p) {
-	    
-	    bool ans = false;
-	    
-	    // Search in all nonempty trees_.
-	    if (tree0_->size() > 0 && tree0_->find(p)) {
-		ans = true;
-	    } 
-	    else {
-		for (TPIE_OS_SIZE_T i = 1; i < trees_.size(); i++) {
-		    // Order is important! Short circuit evaluation.
-		    if (trees_[i]->size() > 0 && trees_[i]->find(p)) {
+	/**
+	 * first search in tree0, then in on disk trees
+	 */
+	//// *Logmethod_base::find* ////
+	template <class Key, class Value, class T, class Tp, class T0, class T0p>
+	bool LOGMETHOD_BASE::find(const Value &p) {
+		bool ans = false;
+		// Search in all nonempty trees_.
+		if (tree0_->size() > 0 && tree0_->find(p)) {
 			ans = true;
-			break;
-		    }
+		} else {
+			for (TPIE_OS_SIZE_T i = 1; i < trees_.size(); i++) {
+				// Order is important! Short circuit evaluation.
+				if (trees_[i]->size() > 0 && trees_[i]->find(p)) {
+					ans = true;
+					break;
+				}
+			}
 		}
-	    }
-	    return ans;      
+		return ans;
 	}
 
-
-//// *Logmethod_base::window_query* ////
+	//// *Logmethod_base::window_query* ////
 	template<class Key, class Value, class T, class Tp, class T0, class T0p>
 	TPIE_OS_OFFSET LOGMETHOD_BASE::window_query(const Key &lop, const Key &hip, 
 						    AMI_STREAM<Value>* stream) {
@@ -459,7 +457,11 @@ namespace tpie {
 	    return mbr_;
 	}
 
-//// *Logmethod_base::create_tree* ////
+	/**
+	 * if idx is 0, then create tree0, an in memory tree.
+	 * else create on disk tree
+	 */
+	//// *Logmethod_base::create_tree* ////
 	template<class Key, class Value, class T, class Tp, class T0, class T0p>
 	void LOGMETHOD_BASE::create_tree(TPIE_OS_SIZE_T idx) 
 	{
@@ -512,81 +514,85 @@ namespace tpie {
 namespace tpie {
 
     namespace ami {
-	
-//// *Logmethod2::Logmethod2* ////
+
+	//// *Logmethod2::Logmethod2* ////
 	template<class Key, class Value, class T, class Tp, class T0, class T0p>
 	LOGMETHOD2::Logmethod2(const std::string& base_file_name, 
 			       const Logmethod_params<Tp, T0p> &params):
 	    Logmethod_base<Key, Value, T, Tp, T0, T0p>(base_file_name, params) {
 	}
-	
-//// *Logmethod2::insert* ////
-	template<class Key, class Value, class T, class Tp, class T0, class T0p>
-	bool LOGMETHOD2::insert(const Value& p) {
-	    
-	    assert(tree0_ != NULL);
-	    
-	    if ((size_t)tree0_->os_block_count() < params_.cached_blocks) {
-		
-		// tree0_ must have insert capabilities, ie, the T0 class
-		// must have insert capabilities. 
-		tree0_->insert(p);
 
-	    } 
-	    else {
-//     std::cout << "trees_[0]->os_block_count(): " << trees_[0]->os_block_count() << endl;
-//     std::cout << "  leaf_count: " << trees_[0]->leaf_count() 
-// 	 << "  node_count: " << trees_[0]->node_count() << endl;
-//     std::cout << "trees_[0]->size():        " << trees_[0]->size() << endl;
-//     std::cout << "  node_cache_size: " << trees_[0]->params().node_cache_size
-// 	 << "  leaf_cache_size: " << trees_[0]->params().leaf_cache_size << endl;
-		
-		// First unload all relevant trees to a stream.
-		
-		typename LOGMETHOD_BASE::stream_t *stream = tpie_new<typename LOGMETHOD_BASE::stream_t>();
-		stream->persist(PERSIST_DELETE);
-		
-		tree0_->unload(stream);
-		tree0_->persist(PERSIST_DELETE);
-		delete tree0_;
-		///    create_tree(0);
-		    
-		    // Free index. The index of the first empty tree.
-		    TPIE_OS_SIZE_T fi = 1;
-		    while (fi < trees_.size() && trees_[fi]->size() > 0) {
-			trees_[fi]->unload(stream);
-			trees_[fi]->persist(PERSIST_DELETE);
-			stats_.record(trees_[fi]->stats());
-			tpie_delete(trees_[fi]);
-			///      create_tree(fi);
-			    fi++;
-		    }
-		    
-		    // Add a new tree position if necessary (ie, no empty tree found).
-		    if (fi == trees_.size()) {
+	//// *Logmethod2::insert* ////
+	template<class Key, class Value, class T, class Tp, class T0, class T0p>
+	bool LOGMETHOD2::insert(const Value &p) {
+		assert(tree0_ != NULL);
+
+		if ((size_t)tree0_->os_block_count() < params_.cached_blocks) {
+			// tree0 not full
+			// tree0_ must have insert capabilities, ie, the T0 class
+			// must have insert capabilities.
+			tree0_->insert(p);
+
+		} else {
+			//     std::cout << "trees_[0]->os_block_count(): " <<
+			//     trees_[0]->os_block_count() << endl; std::cout << "
+			//     leaf_count: " << trees_[0]->leaf_count()
+			// 	 << "  node_count: " << trees_[0]->node_count() << endl;
+			//     std::cout << "trees_[0]->size():        " <<
+			//     trees_[0]->size() << endl; std::cout << "  node_cache_size: "
+			//     << trees_[0]->params().node_cache_size
+			// 	 << "  leaf_cache_size: " << trees_[0]->params().leaf_cache_size
+			// << endl;
+
+			// tree0 full, rebuild selected trees
+			// First unload all relevant trees to a stream.
+			typename LOGMETHOD_BASE::stream_t *stream
+				= tpie_new<typename LOGMETHOD_BASE::stream_t>();
+			stream->persist(PERSIST_DELETE);
+
+			// tree unloading is writing all points in tree to disk file, which is
+			// a TPIE stream.
+			tree0_->unload(stream);
+			tree0_->persist(PERSIST_DELETE);
+			delete tree0_;
+			///    create_tree(0);
+
+			// fi: Free index. The index of the first empty tree.
+			// unload all the trees to the same stream as tree0 until first empty tree.
+			TPIE_OS_SIZE_T fi = 1;
+			while (fi < trees_.size() && trees_[fi]->size() > 0) {
+				trees_[fi]->unload(stream);
+				trees_[fi]->persist(PERSIST_DELETE);
+				stats_.record(trees_[fi]->stats());
+				tpie_delete(trees_[fi]);
+				///      create_tree(fi);
+				fi++;
+			}
+
+			// Add a new tree position if necessary (ie, no empty tree found).
+			if (fi == trees_.size()) {
 				trees_.push_back(0);
-			create_tree(fi);
-		    }
-		    
-		    assert(trees_[fi]->size() == 0);
-		    
-		    // Write the new guy.
-		    stream->write_item(p);
-		    
-		    // Create a new tree from stream.
-		    trees_[fi]->load(stream);
-		    tpie_delete(stream);
-		    
-		    // Create empty trees in positions 0 to fi-1.
-		    for (TPIE_OS_SIZE_T ii = 0; ii < fi; ii++)
-			create_tree(ii);
-	    }
-	    
-	    header_.size++;
-	    return true;
+				create_tree(fi);
+			}
+
+			assert(trees_[fi]->size() == 0);
+
+			// Write the new guy.
+			stream->write_item(p);
+
+			// Create a new tree from stream. loading logic is in kdtree.h load method
+			trees_[fi]->load(stream);
+			tpie_delete(stream);
+
+			// Create empty trees in positions 0 to fi-1.
+			for (TPIE_OS_SIZE_T ii = 0; ii < fi; ii++) create_tree(ii);
+		}
+
+		header_.size++;
+		return true;
 	}
-	
-    }  //  ami namespace
+
+	}  //  ami namespace
 
 }  //  tpie namespace
 

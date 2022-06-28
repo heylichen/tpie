@@ -69,6 +69,8 @@ using namespace tpie::ami;
 //#define KDTREEintd kdtree<int, DIM, kdtree_bin_node_default<int, DIM> >
 typedef kdtree<int, DIM, kdtree_bin_node_small<int, DIM> > KDTREEintd;
 
+// TREE0_TYPE is the data structure used in tree0, which is in memory.
+// so we can use vector or btree. for simplicity, we assume TREE0_VECTOR is used from now on.
 #if (TREE0_TYPE==TREE0_BTREE)
 #  include <tpie/btree.h>
 typename btree<app_params_t::point_t, app_params_t::record_t, app_params_t::point_t::cmp, app_params_t::record_key_t> BTREEintd;
@@ -140,6 +142,7 @@ int main(int argc, char** argv) {
     lm_params.cached_blocks = params.cached_blocks;
     lm_params.tree_params = kd_params;
     if (params.B_for_LMB == 0) {
+		// constuct Logmethod2<>
       lm2 = new LOGMETHOD2intd(params.base_file_name_t, lm_params);
       lm2->persist(params.keep_tree ? PERSIST_PERSISTENT : PERSIST_DELETE);
       params.leaf_block_factor = lm2->params().tree_params.leaf_block_factor;
@@ -299,28 +302,30 @@ int main(int argc, char** argv) {
     atimer.start();
     i = 0;
     params.in_stream->seek(0);
-    if (params.do_logmethod) {
-      if (params.B_for_LMB == 0) {
-	while (i < params.point_count && 
-	       params.in_stream->read_item(&pp) == tpie::ami::NO_ERROR) {
-	  lm2->insert(*pp);
-	  i++;
+	if (params.do_logmethod) {
+		if (params.B_for_LMB == 0) {
+			while (i < params.point_count
+				   && params.in_stream->read_item(&pp) == tpie::ami::NO_ERROR) {
+				//j ust keep inserting point. some insertion will trigger
+				// reloading the trees in logmethod.
+				lm2->insert(*pp);
+				i++;
+			}
+		} else {
+			while (i < params.point_count
+				   && params.in_stream->read_item(&pp) == tpie::ami::NO_ERROR) {
+				lmB->insert(*pp);
+				i++;
+			}
+		}
+	} else {
+		while (i < params.point_count
+			   && params.in_stream->read_item(&pp) == tpie::ami::NO_ERROR) {
+			kdtree->insert(*pp);
+			i++;
+		}
 	}
-      } else {
-	while (i < params.point_count && 
-	       params.in_stream->read_item(&pp) == tpie::ami::NO_ERROR) {
-	  lmB->insert(*pp);
-	  i++;
-	}
-      }
-    } else {
-      while (i < params.point_count && 
-	     params.in_stream->read_item(&pp) == tpie::ami::NO_ERROR) {
-	kdtree->insert(*pp);
-	i++;
-      }
-    }
-    atimer.stop();
+	atimer.stop();
     cerr << "\tInsert timings: " << atimer << endl;
     load_wall = atimer.wall_time();
     load_io = load_wall - atimer.user_time() - atimer.system_time();
@@ -335,73 +340,69 @@ int main(int argc, char** argv) {
   // <><><><><><><><><><><><><><><><><><><><>
   //    Query from ASCII file.
   // <><><><><><><><><><><><><><><><><><><><>
-   
+
   if (params.do_wquery_from_file && err == tpie::ami::NO_ERROR) {
-    ifstream ifs(params.file_name_wquery);
-    if (!ifs) {
-      cerr << argv[0] << ": Error opening window queries file " 
-	   << params.file_name_wquery << endl;
-    } else {
-      TPIE_OS_OFFSET count = 0, result = 0;
-      app_params_t::point_t lop, hip;
-      app_params_t::stream_t *tempstr = (params.do_query_count_only ? NULL: new app_params_t::stream_t);
-      cerr << "Window queries from file " 
-	   << params.file_name_wquery << " ..." << endl;
-      atimer.start();  
+	  ifstream ifs(params.file_name_wquery);
+	  if (!ifs) {
+		  cerr << argv[0] << ": Error opening window queries file "
+			   << params.file_name_wquery << endl;
+	  } else {
+		  TPIE_OS_OFFSET count = 0, result = 0;
+		  app_params_t::point_t lop, hip;
+		  app_params_t::stream_t *tempstr
+			  = (params.do_query_count_only ? NULL
+											: new app_params_t::stream_t);
+		  cerr << "Window queries from file " << params.file_name_wquery
+			   << " ..." << endl;
+		  atimer.start();
 
-      for (ii = 0; ii < DIM; ii++)
-	ifs >> lop[ii];
-      for (ii = 0; ii < DIM; ii++)
-	ifs >> hip[ii];
+		  for (ii = 0; ii < DIM; ii++) ifs >> lop[ii];
+		  for (ii = 0; ii < DIM; ii++) ifs >> hip[ii];
 
-      while (!ifs.eof()) {
-	count++;
+		  while (!ifs.eof()) {
+			  count++;
+			  if (params.do_logmethod)
+				  if (params.B_for_LMB == 0)
+					  result += lm2->window_query(lop, hip, tempstr);
+				  else
+					  result += lmB->window_query(lop, hip, tempstr);
+			  else if (params.query_type == 3) {
+				  //                            _
+				  // 3-sided query, like this: | |
+				  //
+				  hip[1] = max(lop[1], hip[1]);
+				  lop[1] = -app_params_t::point_t::Inf;
+				  result += kdtree->window_query(lop, hip, tempstr);
+			  } else
+				  result += kdtree->window_query(lop, hip, tempstr);
 
-	if (params.do_logmethod)
-	  if (params.B_for_LMB == 0)
-	    result += lm2->window_query(lop, hip, tempstr);
-	  else
-	    result += lmB->window_query(lop, hip, tempstr);
-	else
-	  if (params.query_type == 3) {
-	    //                            _ 
-	    // 3-sided query, like this: | |
-	    //
-	    hip[1] = max(lop[1], hip[1]);
-	    lop[1] = -app_params_t::point_t::Inf;
-	    result += kdtree->window_query(lop, hip, tempstr);
-	  } else
-	    result += kdtree->window_query(lop, hip, tempstr);
+			  for (ii = 0; ii < DIM; ii++) ifs >> lop[ii];
+			  for (ii = 0; ii < DIM; ii++) ifs >> hip[ii];
+		  }
 
-	for (ii = 0; ii < DIM; ii++)
-	  ifs >> lop[ii];
-	for (ii = 0; ii < DIM; ii++)
-	  ifs >> hip[ii];
-      }
+		  atimer.stop();
+		  cerr << "\tQuery timings: " << atimer << endl;
+		  wq_wall = atimer.wall_time();
+		  wq_io = wq_wall - atimer.user_time() - atimer.system_time();
+		  cerr << "\tFound " << result << " points." << endl;
+		  if (tempstr != NULL)
+			  cerr << "\t  (real: " << tempstr->stream_len() << " points)"
+				   << endl;
 
-      atimer.stop();
-      cerr << "\tQuery timings: " << atimer << endl;
-      wq_wall = atimer.wall_time();
-      wq_io = wq_wall - atimer.user_time() - atimer.system_time();
-      cerr << "\tFound " << result << " points." << endl;
-      if (tempstr != NULL)
-	cerr << "\t  (real: " << tempstr->stream_len() << " points)" << endl;
+		  atimer.reset();
 
-      atimer.reset();
+		  add_to_stats(0, "FQUERY:FILE          ", params.file_name_wquery);
+		  add_to_stats(0, "FQUERY:COUNT         ", count);
+		  add_to_stats(0, "FQUERY:RESULT        ", result);
+		  params.stats << "FQUERY:WALL_IO_%IO   "
+					   << double(int(wq_wall * 1000)) / 1000 << " "
+					   << double(int(wq_io * 100)) / 100 << " "
+					   << int(wq_io * 100 / wq_wall) << endl;
 
-      add_to_stats(0, "FQUERY:FILE          ", params.file_name_wquery);
-      add_to_stats(0, "FQUERY:COUNT         ", count);
-      add_to_stats(0, "FQUERY:RESULT        ", result);
-      params.stats << "FQUERY:WALL_IO_%IO   "
-	    << double(int(wq_wall*1000))/1000 << " "
-	    << double(int(wq_io*100))/100 << " "
-	    << int(wq_io*100/wq_wall) << endl;
-
-      delete tempstr;
-      cerr << "Done." << endl;
-    }
+		  delete tempstr;
+		  cerr << "Done." << endl;
+	  }
   }
-
 
   // <><><><><><><><><><><><><><><><><><><><>
   //   Query using random boxes.

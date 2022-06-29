@@ -1877,26 +1877,29 @@ protected:
 		TPLOG("kdtree::create_node Exiting bid="<<bid<<"\n");
 	}
 
-
-//// *kdtree::create_leaf* ////
-	template<class coord_t, TPIE_OS_SIZE_T dim, class Bin_node, class BTECOLL>
-	void TPIE_AMI_KDTREE::create_leaf(bid_t& bid, TPIE_OS_SIZE_T d, 
-									  POINT_STREAM** in_streams) {
-		TPLOG("kdtree::create_leaf Entering "<<"\n");
+	/**
+	 * allocate a leaf block, read all points and copy them to leaf block
+	 */
+	//// *kdtree::create_leaf* ////
+	template <class coord_t, TPIE_OS_SIZE_T dim, class Bin_node, class BTECOLL>
+	void TPIE_AMI_KDTREE::create_leaf(bid_t &bid, TPIE_OS_SIZE_T d,
+									  POINT_STREAM **in_streams) {
+		TPLOG("kdtree::create_leaf Entering "<< "\n");
 		HEIGHTDISPLAY_IN(" O ")
 
-			// New leaf.
-			TPIE_AMI_KDTREE_LEAF* l = fetch_leaf();
+		// New leaf. allocate a disk block and block id, map the block into memory
+		TPIE_AMI_KDTREE_LEAF *l = fetch_leaf();
 		bid = l->bid();
 		assert(d < dim);
 
 		in_streams[d]->seek(0);
-		assert(in_streams[d]->stream_len() <= (TPIE_OS_OFFSET)params_.leaf_size_max);
-  
+		assert(in_streams[d]->stream_len()
+			   <= (TPIE_OS_OFFSET)params_.leaf_size_max);
 		// We are constructing a leaf, so we know that we have
 		// little enough points to safely cast.
 		l->size() = (TPIE_OS_SIZE_T)in_streams[d]->stream_len();
 
+		// leaf blocks form a single linked list. need to keep the first leaf id
 		if (previous_leaf_ == NULL) {
 			first_leaf_id_ = l->bid();
 		} else {
@@ -1907,6 +1910,7 @@ protected:
 
 		// Copy points from stream to leaf. This should be an array copy,
 		// but we don't have the mechanism...
+		// read points from disk and copy to leaf node el vector
 		POINT *p;
 		size_t i;
 		for (i = 0; i < l->size(); i++) {
@@ -1921,10 +1925,10 @@ protected:
 		}
 
 		HEIGHTDISPLAY_OUT
-			TPLOG("kdtree::create_leaf Exiting bid="<<bid<<", dim="<<d<<"\n");
+		TPLOG("kdtree::create_leaf Exiting bid=" << bid << ", dim=" << d << "\n");
 	}
 
-//// *kdtree::create_bin_node_mm* ////
+	//// *kdtree::create_bin_node_mm* ////
 	template<class coord_t, TPIE_OS_SIZE_T dim, class Bin_node, class BTECOLL>
 	void TPIE_AMI_KDTREE::create_bin_node_mm(TPIE_AMI_KDTREE_NODE *b, bn_context ctx, 
 											 POINT** in_streams, TPIE_OS_SIZE_T sz,
@@ -2177,6 +2181,8 @@ protected:
 //// *kdtree::can_do_mm* ////
 	template<class coord_t, TPIE_OS_SIZE_T dim, class Bin_node, class BTECOLL>
 	bool TPIE_AMI_KDTREE::can_do_mm(TPIE_OS_OFFSET sz) {
+		// each dim need to store all the points.
+		// plus node cache and leaf cache and redundant space
 		bool ans = ((TPIE_OS_OFFSET) (sz * sizeof(POINT) * TPIE_OS_OFFSET(dim + 1) + 
 					pcoll_nodes_->block_size() * params_.node_cache_size +
 					pcoll_leaves_->block_size() * params_.leaf_cache_size +
@@ -2627,7 +2633,15 @@ protected:
 		return err;
 	}
 
-//// *kdtree::load_sorted* ////
+	/**
+	 * from sorted point streams on each dim
+	 * build a on disk kdtree. note this method build a single on disk kdtree.
+	 * POINT_STREAM* streams_s[]: sorted point streams on each dim
+	 * lfill: leaf block node fill factor
+	 * nfill: inner block node fill factor
+	 * load_method: load method.
+	 */
+	//// *kdtree::load_sorted* ////
 	template<class coord_t, TPIE_OS_SIZE_T dim, class Bin_node, class BTECOLL>
 	err TPIE_AMI_KDTREE::load_sorted(POINT_STREAM* streams_s[], 
 									 float lfill, float nfill, int load_method) {
@@ -2647,7 +2661,7 @@ protected:
 			TP_LOG_WARNING_ID("Attempting to load with a NULL stream pointer. Aborted.");
 			return tpie::ami::OBJECT_INITIALIZATION;
 		}
-
+		//total poitn count. point count on each dim is the same, so just pick streams_s[0]
 		header_.size = streams_s[0]->stream_len();
 		first_leaf_id_ = 0;
 		previous_leaf_ = NULL;
@@ -2663,16 +2677,17 @@ protected:
 										 size_t(lfill*params_.leaf_size_max));
 		params_.node_size_max = std::min(params_.node_size_max, 
 										 size_t(nfill*params_.node_size_max));
-
+		// max_intranode_height is max height of internal non-root node
+		// max_intraroot_height is max height of root node
 		// Reinitialize params_.max_intranode_height
 		if (params_.max_intranode_height == params_.max_intraroot_height) {
 			// First reset intranode height.
-			size_t i;
+			size_t i; // find the highest bit which is 1
 			for (i = 0; i < 64; i++)
 				if (params_.node_size_max >> i == 1)
 					break;
 			assert(i < 64);
-			params_.max_intranode_height = i + 1;
+			params_.max_intranode_height = i + 1; // height + 1
 
 			// Now reset intraroot height.
 			params_.max_intraroot_height = 
@@ -2680,7 +2695,8 @@ protected:
 						 % params_.max_intranode_height + 1, params_.max_intranode_height);
 		}
 
-		// Set the mbr.
+		// Set the mbr. MBR: minimum bounding rectangle. defined by two point.
+		// header_.mbr_lo and header_.mbr_hi
 		POINT *pp;
 		size_t i;
 		for (i = 0; i < dim; i++) {
@@ -2697,22 +2713,24 @@ protected:
 		header_.mbr_lo.id() = 1;
 		header_.mbr_hi.id() = 1;
 
-
 		DBG("building (" << header_.size << ")...\n");
 		MEMDISPLAY_INIT;
 		HEIGHTDISPLAY_INIT;
 
 		// The actual loading.
 		if (header_.size <= (TPIE_OS_OFFSET)params_.leaf_size_max) {
+			// can be contained in one leaf
 			header_.root_type = BLOCK_LEAF;
 			create_leaf(header_.root_bid, 0, streams_s);
 		} else {
-
 			header_.root_type = BLOCK_NODE;
 			if (can_do_mm(header_.size)) {
+				// can load in memory
 				POINT* streams_mm[dim];
 				TPIE_OS_SIZE_T sz;
+				//copy to memory matrix streams_mm
 				copy_to_mm(streams_s, streams_mm, sz);
+				// create node recursively from streams_mm, write block id to header_.root_bid
 				create_node_mm(header_.root_bid, 0, streams_mm, sz);
 			} else if (load_method & TPIE_AMI_KDTREE_LOAD_BINARY) {
 				// Build the tree using binary distribution.
@@ -3177,7 +3195,7 @@ protected:
 			TPLOG("kdtree::persist Exiting "<<"\n");
 		}
 
-//// *kdtree::fetch_node* ////
+		//// *kdtree::fetch_node* ////
 		template<class coord_t, TPIE_OS_SIZE_T dim, class Bin_node, class BTECOLL>
 			TPIE_AMI_KDTREE_NODE* TPIE_AMI_KDTREE::fetch_node(bid_t bid) {
 			TPIE_AMI_KDTREE_NODE* q;
@@ -3189,13 +3207,14 @@ protected:
 			return q;
 		}
 
-//// *kdtree::fetch_leaf* ////
+		//// *kdtree::fetch_leaf* ////
 		template<class coord_t, TPIE_OS_SIZE_T dim, class Bin_node, class BTECOLL>
 			TPIE_AMI_KDTREE_LEAF* TPIE_AMI_KDTREE::fetch_leaf(bid_t bid) {
 			TPIE_AMI_KDTREE_LEAF* q;
 			stats_.record(LEAF_FETCH);
 			// Warning: using short-circuit evaluation. Order is important.
 			if ((bid == 0) || !leaf_cache_->read(bid, q)) {
+				//#define TPIE_AMI_KDTREE_LEAF  kdtree_leaf<coord_t, dim, BTECOLL>
 				q = new TPIE_AMI_KDTREE_LEAF(pcoll_leaves_, bid);
 			}
 			return q;

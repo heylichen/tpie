@@ -2147,16 +2147,14 @@ protected:
 		TPLOG("kdtree::create_leaf_mm Exiting bid="<<bid<<", dim="<<d<<"\n");  
 	}
 
-
-//// *kdtree::create_node_mm* ////
+	//// *kdtree::create_node_mm* ////
 	template<class coord_t, TPIE_OS_SIZE_T dim, class Bin_node, class BTECOLL>
 	void TPIE_AMI_KDTREE::create_node_mm(bid_t& bid, TPIE_OS_SIZE_T d, 
 										 POINT** in_streams, TPIE_OS_SIZE_T sz) {
 		TPLOG("kdtree::create_node_mm Entering dim="<<d<<"\n");
-
-		// New node.
+		// New node. allocate a disk block and map to memory
 		TPIE_AMI_KDTREE_NODE* n = fetch_node();
-		bid = n->bid();
+		bid = n->bid(); // get the new generated block id
 		n->weight() = sz;
   
 		assert(d < dim);
@@ -2178,7 +2176,7 @@ protected:
 		TPLOG("kdtree::create_node_mm Exiting bid="<<bid<<"\n");
 	}
 
-//// *kdtree::can_do_mm* ////
+	//// *kdtree::can_do_mm* ////
 	template<class coord_t, TPIE_OS_SIZE_T dim, class Bin_node, class BTECOLL>
 	bool TPIE_AMI_KDTREE::can_do_mm(TPIE_OS_OFFSET sz) {
 		// each dim need to store all the points.
@@ -2196,7 +2194,7 @@ protected:
 		return ans;
 	}
 
-//// *kdtree::copy_to_mm* ////
+	//// *kdtree::copy_to_mm*  read from points from disk to memory////
 	template<class coord_t, TPIE_OS_SIZE_T dim, class Bin_node, class BTECOLL>
 	void TPIE_AMI_KDTREE::copy_to_mm(POINT_STREAM** in_streams, POINT** mm_streams, TPIE_OS_SIZE_T& sz) {
 		TPLOG("kdtree::copy_to_mm Entering "<<"\n");
@@ -2217,7 +2215,6 @@ protected:
 			delete in_streams[i];
 			in_streams[i] = NULL;
 		}
-
 		TPLOG("kdtree::copy_to_mm Exiting "<<"\n");
 	}
 

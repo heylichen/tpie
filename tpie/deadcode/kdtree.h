@@ -323,16 +323,22 @@ protected:
 	TPIE_OS_SIZE_T real_median(TPIE_OS_SIZE_T sz) { return (sz - 1) / 2; }
 
 	///////////////////////////////////////////////////////////////////////////
-	/// Returns the position of the median point.
+	/// Returns the position of the median point. sz : the point count
 	///////////////////////////////////////////////////////////////////////////
 	TPIE_OS_OFFSET median(TPIE_OS_OFFSET sz) {
-#if TPIE_AMI_KDTREE_USE_REAL_MEDIAN
+#if TPIE_AMI_KDTREE_USE_REAL_MEDIAN //default 0
 		return real_median(sz);
 #else
+		// i is the smallest int, so that 2^i >= leaf block count to hold sz points
 		int i = 0;
-		while ((static_cast<TPIE_OS_OFFSET>(1) << i) < 
+		while ((static_cast<TPIE_OS_OFFSET>(1) << i) <
+				// expression below calculates how many leaf blocks can contain sz points.
 			   static_cast<TPIE_OS_OFFSET>((sz + params_.leaf_size_max - 1) / params_.leaf_size_max))
 			i++;
+		// i<<(i-1) is the middle block offset. if sz is 8, then i is 3, 1<<(i-1) = 4
+		// if sz is 9, i = 4, 1<<(i-1) = 8.
+		// (static_cast<TPIE_OS_OFFSET>(1) << (i-1)) * params_.leaf_size_max  convert block offset
+		// to point offset
 		return  (static_cast<TPIE_OS_OFFSET>(1) << (i-1)) * params_.leaf_size_max - 1;
 #endif
 	}
@@ -1949,14 +1955,14 @@ protected:
 
 		if (points_are_sample)
 			// Get the real median. There's no point in doing anything fancy
-			// when building on top of a sample.
+			// when building on top of a sample. note: skip this branch, read next branch
 			read_pos = real_median(sz); 
 		else
 			read_pos = median(sz);
 
 		current_stream = in_streams[ctx.d];
 
-		// Read a point.
+		// Read a point. from the point offset
 		p1 = &current_stream[read_pos++];
 		assert(read_pos < sz);
 
@@ -1967,13 +1973,14 @@ protected:
 		assert((*p1)[ctx.d] <= (*p2)[ctx.d]);
   
 		ap = *p1;
-  
 		// Initialize the binary node we are constructing.
 		b->el[ctx.i].initialize(p1->key, ctx.d);  
 
 		// Keep reading until we can discriminate between the two points,
 		// in order to get the exact position. We need the exact position
-		// to be able to allocate memory.
+		// to be able to allocate memory. result is lo_sz = read_pos.
+		// TPIE_AMI_KDTREE_USE_EXACT_SPLIT default :1, compare exact point, using
+		// all dim coordinates.
 #if TPIE_AMI_KDTREE_USE_EXACT_SPLIT
 		while (read_pos < sz && comp_obj_[ctx.d]->compare(*p2, ap) == 0)
 			p2 = &current_stream[++read_pos];
@@ -2003,10 +2010,8 @@ protected:
 		assert(read_pos >= 1);
 
 		lo_sz = read_pos;
-
 		// Create the output streams by distributing the input streams.
 		for (i = 0; i < dim; i++) {
-
 			lo_streams[i] = new POINT[lo_sz];
 			hi_streams[i] = new POINT[sz - lo_sz];
 			// Distribute.
@@ -2147,7 +2152,7 @@ protected:
 		TPLOG("kdtree::create_leaf_mm Exiting bid="<<bid<<", dim="<<d<<"\n");  
 	}
 
-	//// *kdtree::create_node_mm* ////
+	//// *kdtree::create_node_mm* allocate a disk block and call create_bin_node_mm ////
 	template<class coord_t, TPIE_OS_SIZE_T dim, class Bin_node, class BTECOLL>
 	void TPIE_AMI_KDTREE::create_node_mm(bid_t& bid, TPIE_OS_SIZE_T d, 
 										 POINT** in_streams, TPIE_OS_SIZE_T sz) {

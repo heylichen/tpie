@@ -571,7 +571,8 @@ protected:
       
 			// Compute the counts for the cells on the rightmost strip in this
 			// matrix and for the cells on the leftmost strip in the gmx matrix.
-      
+      		// note: for each point in the splitting strip, decide whether count it
+			// to higher matrix or lower matrix.
 			while ((err = g->streams[d]->read_item(&p1)) == tpie::ami::NO_ERROR) {
 				// Stop when reaching the offset of the next strip.
 				if (median_strip < TPIE_OS_OFFSET(g->t[d]) - 1 && off >= TPIE_OS_OFFSET(g->o[d][median_strip + 1]))
